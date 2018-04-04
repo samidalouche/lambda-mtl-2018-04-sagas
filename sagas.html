@@ -1,0 +1,552 @@
+<!doctype html>
+<html lang="en">
+
+	<head>
+		<meta charset="utf-8">
+
+		<title>Saga / Process Manager with Akka Streams and Event Sourcing</title>
+
+<!--
+
+Implementing a Saga/Process Manager with Event Sourcing and Akka-Streams
+
+Implementing distributed systems involves writing, deploying, and operating
+multiple Micro Services, Databases, Queues and other components that interact
+with each other.
+
+When a business transaction spans across multiple services, complications such as
+partial failures arise and the resulting lack of consistency across the various subsystems make the
+task both confusing and error-prone.
+
+Sagas, or Process Managers are a way to cope with this reality by making the compensating actions
+explicit, rather than hiding the concerns throughout the technical layers.
+
+The presentation gives an overview of what sagas are, and how simple sagas can be implemented using
+Event Sourcing and Akka-Streams.
+-->
+
+		<meta name="description" content="Writing Sagas / Business Processes with Akka Stream and Event Sourcing">
+		<meta name="author" content="Sami Dalouche">
+
+		<meta name="apple-mobile-web-app-capable" content="yes">
+		<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+
+		<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+
+		<link rel="stylesheet" href="css/reveal.css">
+		<link rel="stylesheet" href="css/theme/black.css" id="theme">
+
+		<!-- Theme used for syntax highlighting of code -->
+		<link rel="stylesheet" href="lib/css/zenburn.css">
+
+		<!-- Printing and PDF exports -->
+		<script>
+			var link = document.createElement( 'link' );
+			link.rel = 'stylesheet';
+			link.type = 'text/css';
+			link.href = window.location.search.match( /print-pdf/gi ) ? 'css/print/pdf.css' : 'css/print/paper.css';
+			document.getElementsByTagName( 'head' )[0].appendChild( link );
+		</script>
+
+		<!--[if lt IE 9]>
+		<script src="lib/js/html5shiv.js"></script>
+		<![endif]-->
+	</head>
+
+	<body>
+
+		<div class="reveal">
+
+			<!-- Any section element inside of this container is displayed as a slide -->
+			<div class="slides">
+				<section>
+					<section>
+						<h1>Introduction</h1>
+					</section>
+					<section>
+						<h2>Do not expect</h2>
+						<ul>
+							<li class="fragment">"best practices"</li>
+							<li class="fragment">a comparison of the various approaches to write process managers (AWS Step Functions anyone?)</li>
+							<li class="fragment">Complete, fully-functional akka-streams examples</li>
+						</ul>
+					</section>
+					<section>
+						<h2>We will take a look at</h2>
+						<ul>
+							<li class="fragment">Why/When sagas are needed</li>
+							<li class="fragment">How sagas and Event Sourcing complement each other</li>
+							<li class="fragment">How akka-streams can help with creating sagas</li>
+						</ul>
+					</section>
+					<section>
+						<h2>Are you...</h2>
+						<ul>
+							<li class="fragment">interested in Distributed Systems and Big Data?</li>
+							<li class="fragment">interested in working in a remote-first work environment?</li>
+							<li class="fragment">interested in Scala/FP?</li>
+						</ul>
+						<p class="fragment">Check us out at <a href="http://transparency.narrative.io">transparency.narrative.io</a></p>
+						<p class="fragment">Come talk to me at the end of the presentation</p>
+					</section>
+					<section>
+						<h2>Stop me anytime for questions</h2>
+					</section>
+				</section>
+				<section>
+					<section>
+						<h1>Saga / Process Manager</h1>
+					</section>
+					<section>
+						<h2>Other names</h2>
+						<ul>
+							<li class="fragment">Sagas</li>
+							<li class="fragment">Activities</li>
+							<li class="fragment">Business Processes</li>
+							<li class="fragment">Process Managers</li>
+							<li class="fragment">Workflows</li>
+							<li class="fragment">Orchestrations</li>
+							<li class="fragment">Coordinating Workflow</li>
+							<li class="fragment">Business Process Management (BPM)</li>
+							<li class="fragment">Long-running processes</li>
+							<li class="fragment">???</li>
+						</ul>
+					</section>
+					<section>
+						<h2>What is a saga? (1)</h2>
+						(from <a href="https://github.com/eventuate-tram/eventuate-tram-sagas">Eventuate Tram Saga</a>)
+						<blockquote cite="https://github.com/eventuate-tram/eventuate-tram-sagas">
+							A saga maintains consistency across multiple microservices by using a series of local transactions
+							that are coordinated using messages or events.
+						</blockquote>
+					</section>
+					<section>
+						<h2>What is a saga? (2)</h2>
+						<p>
+						(from <a href="http://blog.jonathanoliver.com/cqrs-sagas-with-event-sourcing-part-i-of-ii/">Jonathan Oliver</a>)
+						</p>
+						<blockquote cite="http://blog.jonathanoliver.com/cqrs-sagas-with-event-sourcing-part-i-of-ii/">
+							Sagas manage process.  They contain business behavior, but only in the form of process.
+							This is a critical point.
+							Sagas, in their purest form, don't contain business logic.
+						</blockquote>
+					</section>
+					<section>
+						<h2>What is a saga? (3)</h2>
+						<p>
+						(from <a href="https://martinfowler.com/articles/201701-event-driven.html">Martin Fowler</a>)
+						</p>
+						<blockquote cite="https://martinfowler.com/articles/201701-event-driven.html">
+							The danger is that it's very easy to make nicely decoupled systems with event notification,
+							without realizing that you're losing sight of that larger-scale flow,
+							and thus set yourself up for trouble in future years
+						</blockquote>
+					</section>
+					<section>
+						<h2>What is a saga? (4)</h2>
+						<p>
+						(from <a href="https://msdn.microsoft.com/en-us/library/jj591569.aspx">Microsoft</a>)
+						</p>
+						<blockquote cite="https://msdn.microsoft.com/en-us/library/jj591569.aspx">
+							The saga concept removes the need for a distributed transaction by
+							ensuring that the transaction at each step of the business process has a defined compensating transaction
+						</blockquote>
+					</section>
+					<section>
+						<h2>Tradictional View (1)</h2>
+						<p>
+						(from <a href="https://particular.net/blog/what-starbucks-can-teach-us-about-software-scalability">Particular Software</a>)
+						</p>
+						<img src="img/starbucks-basic.png" height="75%" width="75%" />
+					</section>
+					<section>
+						<h2>Traditional View (2)</h2>
+						<pre><code class="scala" class="fragment" data-trim contenteditable>
+							withinTransaction {
+								takeOrder()
+								collectPayment()
+								makeCoffee()
+								deliverCoffee()
+							}
+						</code></pre>
+					</section>
+					<section>
+						<h2>Traditional View (3)</h2>
+						<ul>
+							<li>Linear view only exists in programmer's dreams</li>
+							<li>Payment service is provided by your bank</li>
+							<li>Scale vertically (cashier/barista)</li>
+							<li>Scale horizontally (multiple cashiers/baristas)</li>
+							<li>Coffee machine might break</li>
+							<li>Might run out of a specific type of coffee</li>
+							<li>Client does not BLOCK WAITING for coffee</li>
+							<li>Blended drinks and drip coffee don't take the same time</li>
+							<li>batch-prepare several orders to save time</li>
+						</ul>
+					</section>
+					<section>
+						<h2>Traditional View (4)</h2>
+						<pre><code class="scala" class="fragment" data-trim contenteditable>
+							withinDistributedTransaction {
+								takeOrder()
+								collectPayment()
+								makeCoffee()
+								deliverCoffee()
+							}
+						</code></pre>
+					</section>
+					<section>
+						<h2>Traditional View (5)</h2>
+						<pre><code class="scala" class="fragment" data-trim contenteditable>
+							letsImplementTransactionsLater {
+								takeOrder()
+								collectPayment()
+								makeCoffee()
+								deliverCoffee()
+							}
+						</code></pre>
+					</section>
+					<section>
+						<h2>You don't need a Process Manager</h2>
+						<ul>
+							<li class="fragment">if your Micro Services have nothing to do with each other </li>
+							<li class="fragment">if your entire system performs short-lived operations on a single database that supports transactions (CRUD)</li>
+							<li class="fragment">if you want to maintain the illusion that
+								<ul>
+									<li class="fragment">everything happens synchronously</li>
+									<li class="fragment">failures never happen</li>
+									<li class="fragment">there is no such thing as long-lived transactions</li>
+								</ul>
+							</li>
+						</ul>
+					</section>
+					<section>
+						<h2>You may need a Process Manager</h2>
+						<ul>
+							<li class="fragment">if your (micro-?) services interact with each other for anything else than pure queries</li>
+							<li class="fragment">if distributed transactions / 2PC sound like something that could address your concerns</li>
+							<li class="fragment">if understanding what the system does as a whole requires understanding the inner-workings of all micro services</li>
+							<li class="fragment">if you would like the coordination logic to be testable / easily modify message routing</li>
+						</ul>
+					</section>
+					<section>
+						<h2>What's so hard about long-running transactions?</h2>
+						<ul>
+							<li class="fragment">Inconsistent state</li>
+							<li class="fragment">Ordering of messages</li>
+							<li class="fragment">Duplication of messages</li>
+							<li class="fragment">Correlation of messages</li>
+						</ul>
+					</section>
+					<section>
+						<h2>Implementing a Saga (1)</h2>
+						<ul>
+							<li>Saga: series of steps</li>
+							<li>Step: transaction, compensating transaction or both</li>
+							<li>Transaction: invocation of a saga participant using a command</li>
+							<li>Track the transactions / overall state</li>
+							<li>Rollback: on failure, execute the compensating transactions</li>
+						</ul>
+					</section>
+					<section>
+						<h2>Implementing a Saga? (2)</h2>
+						<ul>
+							<li class="fragment">A State Machine</li>
+							<li class="fragment">A way to persist the state machine</li>
+							<li class="fragment">A way to send (ideally: idempotent) commands to the various subsystems</li>
+							<li class="fragment">A way to split the long-running transaction into several smaller, discrete steps</li>
+							<li class="fragment">Compensating actions to react to the failure scenarii (write-off, retry, compensate)</li>
+						</ul>
+					</section>
+					<section>
+						<h2>Implementing a Saga? (3)</h2>
+						<ul>
+							<li>Model the interactions (MESSAGES) between actors (humans, software, external services)</li>
+							<li>Business-level solution to addressing failures</li>
+							<li>Non-virtual world: "pretend the last 10 minutes did not happen"</li>
+						</ul>
+					</section>
+					<section>
+						<h2>Implementing a Saga? (3)</h2>
+						<ul>
+							<li>Model the interactions (MESSAGES) between actors (humans, software, external services)</li>
+							<li>Business-level solution to addressing failures</li>
+							<li>Non-virtual world: "pretend the last 10 minutes did not happen"</li>
+							<li>Don't forget: not all mistakes are worth preventing</li>
+						</ul>
+					</section>
+					<section>
+						<h2>Implementing a Saga (4)</h2>
+						<p>
+						(from <a href="https://particular.net/blog/what-starbucks-can-teach-us-about-software-scalability">Particular Software</a>)
+						</p>
+						<img src="img/starbucks-regularcustomer.png" height="75%" width="75%" />
+					</section>
+
+				</section>
+				<section>
+					<section>
+						<h1>Event Sourcing</h1>
+					</section>
+					<section>
+						<h2>Highly recommended read</h2>
+						<a href="https://engineering.linkedin.com/distributed-systems/log-what-every-software-engineer-should-know-about-real-time-datas-unifying">The Log: What every software engineer should know about real-time data's unifying abstraction
+						</a>
+
+						<blockquote cite="https://engineering.linkedin.com/distributed-systems/log-what-every-software-engineer-should-know-about-real-time-datas-unifying">
+							You can't fully understand databases, NoSQL stores, key value stores, replication, paxos, hadoop, version control, or almost any software system without understanding logs; and yet, most software engineers are not familiar with them
+						</blockquote>
+					</section>
+					<section>
+						<h2>The Log</h2>
+						<img src="img/log.png" />
+						<ul>
+							<li>Distributing messages
+								<ul>
+									<li>Can store events/facts: what happened</li>
+									<li>Can store commands: a request to perform a task</li>
+									<li>Can store state</li>
+								</ul>
+							</li>
+							<li>Ordering messages: index = "time"</li>
+						</ul>
+					</section>
+					<section>
+						<h2>Common uses of logs</h2>
+						<ul>
+							<li>ACID: keep data structures and indexes in sync (WAL)</li>
+							<li>Database write-ahead log (keeps data structures and indexes in sync)</li>
+							<li>Master-Slave replication</li>
+							<li>Generalized Pub-Sub/Queuing mechanism (Kafka)</li>
+							<li>Wearable device ~> Mobile App ~> Backend sync / replication</li>
+							<li>Akka Actors Mailbox</li>
+							<li>Raft/Consensus Algos/Blockchain = maintains a log</li>
+						</ul>
+					</section>
+					<section>
+						<h2>Duality between event log and table</h2>
+						<ul>
+							<li>(re)build a table / index from a database</li>
+							<li>create a changelog containing all the successive states of the database after each update</li>
+						</ul>
+					</section>
+					<section>
+						<h2>Distributed systems and determinism</h2>
+						<p>
+						(from <a href="https://engineering.linkedin.com/distributed-systems/log-what-every-software-engineer-should-know-about-real-time-datas-unifying">LinkedIn Engineering</a>)
+						</p>
+						<img src="img/active_and_passive_arch.png" />
+					</section>
+					<section>
+						<h2>CQRS/Event Sourcing</h2>
+						<ul>
+							<li>User actions trigger commands</li>
+							<li>Commands trigger events</li>
+							<li>Events are persisted ("write" model)</li>
+							<li>Several optimized "read" models are built</li>
+							<li>Commands can be rejected</li>
+							<li>Events happened, accept the reality</li>
+						</ul>
+					</section>
+				</section>
+
+				<section>
+					<section>
+						<h1>Case Study</h1>
+						<p>
+							Not lucky-enough to work on a complex transactional
+							system involving billing, flight/car/hotel booking?
+						</p>
+					</section>
+					<section>
+						<img src="img/case-study.jpg" height="75%" width="75%" />
+					</section>
+					<section>
+						<h2>Event logs/queues benefits</h2>
+						<ul>
+							<li class="fragment">Decoupling of Analysis / Detection services</li>
+							<li class="fragment">Reliable communication / retries on system/network failures / etc</li>
+							<li class="fragment">Determinism</li>
+							<li class="fragment">Unit-testing</li>
+							<li class="fragment">Eventual consistency</li>
+						</ul>
+					</section>
+					<section>
+						<h2>Gotchas</h2>
+						<ul>
+							<li class="fragment">Do not forget to make projections idempotent</li>
+							<li class="fragment">Eventual consistency</li>
+						</ul>
+					</section>
+					<section>
+						<h2>Reprojections</h2>
+						<img src="img/case-study-reprojections.jpg" height="75%" width="75%" />
+					</section>
+					<section>
+						<h2>Events are not enough</h2>
+						<ul>
+							<li class="fragment">Events = Notifications. Something HAS HAPPENED</li>
+							<li class="fragment">Commands = Imperatives. Request to perform an action</li>
+							<li class="fragment">"Please re-analyze all activities for all users" == Command</li>
+							<li class="fragment">"Please re-analyze all activities for user X" == Command</li>
+						</ul>
+					</section>
+					<section>
+						<h2>Analysis process / reprojection</h2>
+						<ul>
+							<li class="fragment">Is order-sensitive/stateful for a particular user</li>
+							<li class="fragment">When reprojecting activities, old activities should be processed before new ones are analyzed</li>
+							<li class="fragment">Takes time</li>
+							<li class="fragment">Multiple reprojections can be requested concurrently</li>
+							<li class="fragment">Reprojection should be crashproof / should restart where it left</li>
+						</ul>
+					</section>
+				</section>
+
+				<section>
+					<section>
+					<h1>akka + saga = ❤️</h1>
+					</section>
+					<section>
+						<h2>Reminder</h2>
+						<ul>
+							<li class="fragment">A State Machine</li>
+							<li class="fragment">A way to persist the state machine</li>
+							<li class="fragment">A way to send (ideally: idempotent) commands to the various subsystems</li>
+							<li class="fragment">A way to split the long-running transaction into several smaller, discrete steps</li>
+							<li class="fragment">Compensating actions to react to the failure scenarii</li>
+						</ul>
+					</section>
+					<section>
+						<h2>State Machine</h2>
+						<pre><code class="scala" class="fragment" data-trim contenteditable>
+							def nextState(
+								state: SagaState,
+								message: (Offset, Event)): SagaState = {
+						    // your logic to combine state with message.
+								// Returns a new state
+								state.combine(message)
+						  }
+							def nextStateFlow(initialState: SagaState = SagaState()): Flow[(Offset, Event), SagaState, NotUsed] = {
+								Flow[(Offset, Event)].fold(initialState)(nextState)
+							}
+						</code></pre>
+					</section>
+					<section>
+						<h2>Persist the state machine (1)</h2>
+						<ul>
+							<li>Persist the activities performed by the state machine as events
+								<ul>
+									<li>ReprojectionStartedForAllUsers</li>
+									<li>ReprojectionStartedForUser1</li>
+									<li>ReprojectionEndedForUser1</li>
+									<li>ReprojectionEndedForAllUsers</li>
+								</ul>
+							</li>
+							<li> To rebuild the state: Replay all events using the State Machine logic from the last snapshot
+							</li>
+							<li> Save a snapshot with the final state (optimization)
+							</li>
+						</ul>
+					</section>
+					<section>
+						<h2>Persist the state machine (2)</h2>
+						<pre><code class="scala" class="fragment" data-trim contenteditable>
+						  def rebuildFlow(snapshotStore: SnapshotStore): Flow[(Offset, Event), Done, NotUsed] = {
+						    Flow[(Offset, Event)]
+						      .flatMapConcat { case (offset, event) =>
+						        val key = eventToKey(event)
+						        Source.single(key)
+						          .mapAsync(1)(snapshotStore.fetch(_))
+						          .flatMapConcat { previousStateOpt =>
+						            val initial = previousStateOpt.getOrElse(SagaState())
+
+						            Source.single(offset -> message)
+						              .via(MySaga.nextStateFlow(initial))
+						          }
+						          .mapAsync(1) { sagaState =>
+						            snapshotStore.update(key, sagaState)
+												sagaState
+						          }
+						      }
+						  }
+						</code></pre>
+					</section>
+					<section>
+						<h2>Receive commands (1)</h2>
+						<ul>
+							<li>Prioritize "reprojection" commands over processing "ActivityDetected" events
+							</li>
+							<img src="img/priority-merge.jpg" height="50%" width="50%" />
+						</ul>
+					</section>
+					<section>
+						<h2>Receive commands (2)</h2>
+						<pre><code class="scala" class="fragment" data-trim contenteditable>
+							def combinePreferred[T](highPriority: Source[T, NotUsed], lowPriority: Source[T, NotUsed]): Source[T, NotUsed] = {
+						    Source.fromGraph(GraphDSL.create() { implicit b ⇒
+						      import GraphDSL.Implicits._
+
+						      val merge = b.add(MergePreferred[T](1))
+						      highPriority ~> merge.preferred
+						      lowPriority ~> merge.in(0)
+
+						      SourceShape[T](merge.out)
+						    })
+						  }
+						</code></pre>
+
+					</section>
+					<section>
+						<h2>Split into smaller steps</h2>
+						<ul>
+							<li>`ProjectActivity` command for each individual ActivityDetectedEvent</li>
+							<li>`ReprojectAll` command is done when all `ProjectActivity` commands have been processed</li>
+						</ul>
+					</section>
+					<section>
+						<h2>Compensating actions</h2>
+						<ul>
+							<li>Log network/system failure</li>
+							<li>Alert</li>
+							<li>Retry until Developers have fixed the underlying issue</li>
+						</ul>
+					</section>
+				</section>
+				<section>
+					<h2>Thank You!</h2>
+					<p>Check us out at <a href="http://transparency.narrative.io">transparency.narrative.io</a></p>
+				</section>
+			</div>
+
+		</div>
+
+		<script src="lib/js/head.min.js"></script>
+		<script src="js/reveal.js"></script>
+
+		<script>
+
+			// More info https://github.com/hakimel/reveal.js#configuration
+			Reveal.initialize({
+				controls: true,
+				progress: true,
+				history: true,
+				center: true,
+
+				transition: 'slide', // none/fade/slide/convex/concave/zoom
+
+				// More info https://github.com/hakimel/reveal.js#dependencies
+				dependencies: [
+					{ src: 'lib/js/classList.js', condition: function() { return !document.body.classList; } },
+					{ src: 'plugin/markdown/marked.js', condition: function() { return !!document.querySelector( '[data-markdown]' ); } },
+					{ src: 'plugin/markdown/markdown.js', condition: function() { return !!document.querySelector( '[data-markdown]' ); } },
+					{ src: 'plugin/highlight/highlight.js', async: true, callback: function() { hljs.initHighlightingOnLoad(); } },
+					{ src: 'plugin/zoom-js/zoom.js', async: true },
+					{ src: 'plugin/notes/notes.js', async: true }
+				]
+			});
+
+		</script>
+
+	</body>
+</html>
